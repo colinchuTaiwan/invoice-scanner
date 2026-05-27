@@ -176,7 +176,6 @@ def call_ocr(image_bytes: bytes, api_key_override: str = "") -> str:
             "role": "user",
             "content": [
                 {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64_orig}"}},
-                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64_enhanced}"}},
                 {"type": "text",
                  "text": (
                      "請找出圖片中所有發票號碼。\n"

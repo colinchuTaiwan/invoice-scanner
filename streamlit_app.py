@@ -179,9 +179,10 @@ def extract_invoice_numbers(text: str) -> list[str]:
     return result
 
 
-def call_ocr(image_bytes: bytes, filename: str) -> str:
-    """呼叫 OCR API（OpenAI-compatible），回傳辨識文字。"""
-    if not OCR_API_KEY:
+def call_ocr(image_bytes: bytes, filename: str, api_key_override: str = "") -> str:
+    """呼叫 OCR API，自動嘗試多種路徑格式。"""
+    key = api_key_override.strip() or OCR_API_KEY
+    if not key:
         raise RuntimeError("OCR_API_KEY 未設定，請在 Streamlit Secrets 加入 OCR_API_KEY")
 
     ext  = filename.rsplit(".", 1)[-1].lower()
@@ -189,7 +190,27 @@ def call_ocr(image_bytes: bytes, filename: str) -> str:
             "png": "image/png",  "webp": "image/webp"}.get(ext, "image/jpeg")
     b64  = base64.b64encode(image_bytes).decode()
 
-    payload = {
+    headers = {
+        "Authorization": f"Bearer {key}",
+        "Content-Type":  "application/json",
+    }
+
+    base = OCR_ENDPOINT.rstrip("/")
+
+    # 嘗試的路徑順序
+    candidates = [
+        f"{base}/chat/completions",   # OpenAI-compatible
+        f"{base}/ocr",                # Surya / 自訂 OCR server
+        f"{base}/recognize",          # 其他常見路徑
+        base,                         # 端點本身即為 API
+    ]
+    # 若端點已含特定路徑，只試該路徑
+    for suffix in ("/chat/completions", "/ocr", "/recognize"):
+        if base.endswith(suffix):
+            candidates = [base]
+            break
+
+    openai_payload = {
         "model": "gpt-4o",
         "messages": [{
             "role": "user",
@@ -205,17 +226,42 @@ def call_ocr(image_bytes: bytes, filename: str) -> str:
         }],
         "max_tokens": 2000,
     }
-    headers = {
-        "Authorization": f"Bearer {OCR_API_KEY}",
-        "Content-Type":  "application/json",
+    simple_payload = {
+        "image":     b64,
+        "mime_type": mime,
+        "prompt":    "辨識所有台灣統一發票號碼及圖片中所有文字",
     }
+
+    last_err = None
     with httpx.Client(timeout=60) as client:
-        resp = client.post(
-            f"{OCR_ENDPOINT.rstrip('/')}/chat/completions",
-            json=payload, headers=headers,
-        )
-    resp.raise_for_status()
-    return resp.json()["choices"][0]["message"]["content"]
+        for url in candidates:
+            payload = openai_payload if "completions" in url else simple_payload
+            try:
+                resp = client.post(url, json=payload, headers=headers)
+                if resp.status_code == 404:
+                    last_err = f"404：{url}"
+                    continue
+                resp.raise_for_status()
+                data = resp.json()
+                # 解析各種回傳格式
+                if "choices" in data:
+                    return data["choices"][0]["message"]["content"]
+                if "text" in data:
+                    return data["text"]
+                if "result" in data:
+                    return data["result"]
+                if "ocr_text" in data:
+                    return data["ocr_text"]
+                return str(data)
+            except httpx.HTTPStatusError as e:
+                last_err = f"{e.response.status_code}：{url}"
+                continue
+
+    raise RuntimeError(
+        f"所有路徑均失敗（最後錯誤：{last_err}）\n"
+        f"嘗試過：{', '.join(candidates)}\n"
+        f"請向 API 提供方確認正確的端點路徑，並更新 Secrets 中的 OCR_ENDPOINT。"
+    )
 
 
 # ── 側邊欄：中獎規則說明 ──────────────────────────────────
@@ -235,9 +281,12 @@ with st.sidebar:
 """
     st.markdown(rules_md)
     st.markdown("---")
-    #st.caption("API 設定由 Streamlit Secrets 管理，無需在介面輸入。")
-    #st.caption(f"端點：`{OCR_ENDPOINT}`")
-    st.caption(f"API Key：{'✅ 已設定' if OCR_API_KEY else '❌ 未設定'}")
+    st.markdown("### 🔧 API 設定")
+    st.caption("正常由 Streamlit Secrets 自動載入，若出現 401 可在此手動輸入測試")
+    manual_key = st.text_input("手動輸入 API Key（測試用）", type="password",
+                               placeholder="留空則使用 Secrets 設定")
+    st.caption(f"端點：`{OCR_ENDPOINT}`")
+    st.caption(f"Secrets Key：{'✅ 已設定' if OCR_API_KEY else '❌ 未設定'}")
 
 
 # ── 主介面分欄 ────────────────────────────────────────────
@@ -306,8 +355,8 @@ scan = st.button("🎰 開始掃描發票", use_container_width=True, type="prim
 
 if scan:
     err = None
-    if not OCR_API_KEY:
-        err = "❌ OCR_API_KEY 未設定，請在 Streamlit Cloud → Settings → Secrets 加入"
+    if not (OCR_API_KEY or manual_key.strip()):
+        err = "❌ OCR_API_KEY 未設定，請在 Streamlit Cloud → Settings → Secrets 加入，或在側邊欄手動輸入"
     elif not uploaded_files:
         err = "⚠️ 請先上傳至少一張發票圖片"
     elif not any_filled:
@@ -323,7 +372,7 @@ if scan:
             prog.progress(idx / len(uploaded_files),
                           text=f"辨識第 {idx+1}/{len(uploaded_files)} 張：{f.name}")
             try:
-                raw   = call_ocr(f.read(), f.name)
+                raw   = call_ocr(f.read(), f.name, manual_key)
                 invs  = extract_invoice_numbers(raw)
                 ocr_logs.append({"file": f.name, "text": raw, "invoices": invs})
 

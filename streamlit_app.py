@@ -155,9 +155,7 @@ def call_ocr(image_bytes: bytes, api_key_override: str = "") -> str:
                 {"type": "image_url",
                  "image_url": {"url": f"data:image/png;base64,{b64}"}},
                 {"type": "text",
-                 "text": "請辨識圖片中所有文字,從文字中辨識發票號碼。"
-                 "發票號碼格式為「兩個英文字母 + 8位數字」（例如 AB-12345678 或 AB 12345678）,直接輸出發票號碼，不需說明"              
-                 },
+                 "text": "請辨識圖片中所有文字，直接輸出，不需說明。"},
             ],
         }],
     )
@@ -189,7 +187,7 @@ with st.sidebar:
 |------|---------|------|
 | 特別獎 | 8碼完全相同 | 1,000萬元 |
 | 特獎   | 8碼完全相同 | 200萬元 |
-| 頭獎   | 8碼完全相同（3組）| 20萬元 |
+| 頭獎   | 8碼完全相同| 20萬元 |
 | 二獎   | 末7碼與頭獎相同 | 4萬元 |
 | 三獎   | 末6碼與頭獎相同 | 1萬元 |
 | 四獎   | 末5碼與頭獎相同 | 4,000元 |
@@ -217,7 +215,7 @@ with col_l:
         special_input = st.text_input("特別獎（8碼）", placeholder="12345678")
         super_input   = st.text_input("特獎（8碼）",   placeholder="12345678")
     with cb:
-        first_input   = st.text_area("頭獎（最多3組，每行一組）",
+        first_input   = st.text_area("頭獎（每行一組）",
                                      placeholder="12345678\n23456789\n34567890",
                                      height=120)
     winning = {

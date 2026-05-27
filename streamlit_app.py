@@ -1,5 +1,5 @@
 """
-invoice_scanner.py — 發票中獎掃描器
+invoice_scanner.py — 發票對獎神器
 Streamlit 應用程式
 
 Streamlit Cloud Secrets 設定：
@@ -15,7 +15,7 @@ import json
 from PIL import Image
 
 # ── 頁面設定 ──────────────────────────────────────────────
-st.set_page_config(page_title="發票中獎掃描器", page_icon="🎰", layout="wide")
+st.set_page_config(page_title="發票對獎神器", page_icon="🎰", layout="wide")
 
 st.markdown("""
 <style>
@@ -107,7 +107,7 @@ st.markdown("""
 # ── Hero 標題 ─────────────────────────────────────────────
 st.markdown("""
 <div class="hero">
-    <h1>🎰 發票中獎掃描器</h1>
+    <h1>🎰 發票對獎神器</h1>
     <p>上傳發票圖片，自動辨識號碼並比對中獎號碼 — 結果僅供參考，請以財政部官方公告為準</p>
 </div>
 """, unsafe_allow_html=True)

@@ -167,33 +167,33 @@ def check_prize(invoice_num: str, winning: dict) -> dict | None:
 
 
 def extract_invoice_numbers(text: str) -> list[str]:
-    """擷取統一發票號碼，支援大小寫、空格、換行等各種格式。"""
-    # 標準格式：2英文 + 選擇性分隔符 + 8數字
-    found = re.findall(r"[A-Za-z]{2}[\s\-—–]?\d{8}", text)
+    """擷取統一發票號碼，支援紙本（AYXXXXXXXX）與電子發票（ZM-XXXXXXXX）格式。"""
     result = []
     seen = set()
-    for num in found:
-        # 只保留字母和數字
-        n = re.sub(r"[^A-Za-z0-9]", "", num).upper()
-        if len(n) == 10 and n not in seen:
-            seen.add(n)
-            result.append(n[:2] + "-" + n[2:])
 
-    # 備援：有時 OCR 會把字母和數字分開辨識在兩行
-    # 找出獨立的 8 位數字，配合前一行的 2 字母
+    # 主要 regex：2英文 + 可選的單一非空白分隔符 + 8數字（不跨行）
+    for line in text.splitlines():
+        for m in re.finditer(r"[A-Za-z]{2}[-–—]?\d{8}", line):
+            n = re.sub(r"[^A-Za-z0-9]", "", m.group()).upper()
+            if len(n) == 10 and n not in seen:
+                seen.add(n)
+                result.append(n[:2] + "-" + n[2:])
+
+    # 備援：OCR 把「ZM」和「89179735」拆成兩行的情況
     lines = text.upper().splitlines()
     for i, line in enumerate(lines):
-        clean = re.sub(r"\s", "", line)
+        clean_line = line.strip()
         # 這行是純 8 位數字
-        if re.fullmatch(r"\d{8}", clean) and i > 0:
-            prev = re.sub(r"\s", "", lines[i - 1])
-            # 前一行結尾有 2 個英文字母
-            m = re.search(r"[A-Z]{2}$", prev)
+        if re.fullmatch(r"\d{8}", clean_line) and i > 0:
+            prev = lines[i - 1].strip()
+            # 前一行【結尾】恰好是 2 個英文字母（電子發票行格式如「ZM-」或「ZM」）
+            m = re.search(r"([A-Z]{2})-?$", prev)
             if m:
-                candidate = m.group() + clean
+                candidate = m.group(1) + clean_line
                 if candidate not in seen:
                     seen.add(candidate)
                     result.append(candidate[:2] + "-" + candidate[2:])
+
     return result
 
 
@@ -228,12 +228,12 @@ def call_ocr(image_bytes: bytes, filename: str, api_key_override: str = "") -> s
                 {"type": "text",
                  "text": (
                      "這是台灣統一發票的圖片，可能有多張發票重疊或傾斜。\n"
-                     "請仔細辨識圖片中【所有】發票號碼，格式為：2個英文字母 + 8位數字（例如 AB-12345678）。\n"
+                     "請仔細辨識圖片中【所有】發票號碼，格式為：2個英文字母 + 8位數字（例如 AY-78797529）。\n"
                      "注意：\n"
-                     "- 號碼可能是紅色印章字體或黑色字體\n"
+                     "- 號碼可能是紅色印章字體\n"
                      "- 發票可能傾斜或部分遮擋\n"
                      "- 圖中可能有多張發票，每張都要辨識\n"
-                     "- 英文字母通常在號碼最前面（如 AB、AC、CD 等）\n\n"
+                     "- 英文字母通常在號碼最前面（如 AY、AB、CD 等）\n\n"
                      "請列出所有找到的發票號碼，每行一組，同時輸出圖片中所有可見的文字。"
                  )},
             ],

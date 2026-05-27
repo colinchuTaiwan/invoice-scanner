@@ -186,6 +186,7 @@ def call_ocr(image_bytes: bytes, api_key_override: str = "") -> str:
                 {"type": "text",
                  "text": (
                      "請辨識圖片中所有文字，直接輸出，不需說明。\n"
+                     "特別注意紅色印章內或綠色印章內的發號碼（格式：2英文字母+8位數字）。"
                  )},
             ],
         }],

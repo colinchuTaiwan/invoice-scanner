@@ -235,8 +235,8 @@ with st.sidebar:
 """
     st.markdown(rules_md)
     st.markdown("---")
-    st.caption("API 設定由 Streamlit Secrets 管理，無需在介面輸入。")
-    st.caption(f"端點：`{OCR_ENDPOINT}`")
+    #st.caption("API 設定由 Streamlit Secrets 管理，無需在介面輸入。")
+    #st.caption(f"端點：`{OCR_ENDPOINT}`")
     st.caption(f"API Key：{'✅ 已設定' if OCR_API_KEY else '❌ 未設定'}")
 
 

@@ -1,5 +1,5 @@
 """
-invoice_scanner.py — 發票對獎神器
+invoice_scanner.py — 發票中獎掃描器
 Streamlit 應用程式
 
 Streamlit Cloud Secrets 設定：
@@ -15,7 +15,7 @@ import json
 from PIL import Image
 
 # ── 頁面設定 ──────────────────────────────────────────────
-st.set_page_config(page_title="發票對獎神器", page_icon="🎰", layout="wide")
+st.set_page_config(page_title="發票中獎掃描器", page_icon="🎰", layout="wide")
 
 st.markdown("""
 <style>
@@ -107,7 +107,7 @@ st.markdown("""
 # ── Hero 標題 ─────────────────────────────────────────────
 st.markdown("""
 <div class="hero">
-    <h1>🎰 發票對獎神器</h1>
+    <h1>🎰 發票中獎掃描器</h1>
     <p>上傳發票圖片，自動辨識號碼並比對中獎號碼 — 結果僅供參考，請以財政部官方公告為準</p>
 </div>
 """, unsafe_allow_html=True)
@@ -167,15 +167,33 @@ def check_prize(invoice_num: str, winning: dict) -> dict | None:
 
 
 def extract_invoice_numbers(text: str) -> list[str]:
-    """擷取 AB-12345678 格式的統一發票號碼。"""
-    found = re.findall(r"[A-Z]{2}[-\s]?\d{8}", text.upper())
+    """擷取統一發票號碼，支援大小寫、空格、換行等各種格式。"""
+    # 標準格式：2英文 + 選擇性分隔符 + 8數字
+    found = re.findall(r"[A-Za-z]{2}[\s\-—–]?\d{8}", text)
     result = []
     seen = set()
     for num in found:
-        n = re.sub(r"[-\s]", "", num)
+        # 只保留字母和數字
+        n = re.sub(r"[^A-Za-z0-9]", "", num).upper()
         if len(n) == 10 and n not in seen:
             seen.add(n)
             result.append(n[:2] + "-" + n[2:])
+
+    # 備援：有時 OCR 會把字母和數字分開辨識在兩行
+    # 找出獨立的 8 位數字，配合前一行的 2 字母
+    lines = text.upper().splitlines()
+    for i, line in enumerate(lines):
+        clean = re.sub(r"\s", "", line)
+        # 這行是純 8 位數字
+        if re.fullmatch(r"\d{8}", clean) and i > 0:
+            prev = re.sub(r"\s", "", lines[i - 1])
+            # 前一行結尾有 2 個英文字母
+            m = re.search(r"[A-Z]{2}$", prev)
+            if m:
+                candidate = m.group() + clean
+                if candidate not in seen:
+                    seen.add(candidate)
+                    result.append(candidate[:2] + "-" + candidate[2:])
     return result
 
 
@@ -209,8 +227,14 @@ def call_ocr(image_bytes: bytes, filename: str, api_key_override: str = "") -> s
                  "image_url": {"url": f"data:image/png;base64,{b64}"}},
                 {"type": "text",
                  "text": (
-                     "請辨識圖片中所有台灣統一發票號碼（格式：2英文字母+8位數字，例如 AB-12345678）。"
-                     "同時辨識圖片中所有可見文字，請直接輸出完整辨識文字，不需額外說明。"
+                     "這是台灣統一發票的圖片，可能有多張發票重疊或傾斜。\n"
+                     "請仔細辨識圖片中【所有】發票號碼，格式為：2個英文字母 + 8位數字（例如 AY-78797529）。\n"
+                     "注意：\n"
+                     "- 號碼可能是紅色印章字體\n"
+                     "- 發票可能傾斜或部分遮擋\n"
+                     "- 圖中可能有多張發票，每張都要辨識\n"
+                     "- 英文字母通常在號碼最前面（如 AY、AB、CD 等）\n\n"
+                     "請列出所有找到的發票號碼，每行一組，同時輸出圖片中所有可見的文字。"
                  )},
             ],
         }],

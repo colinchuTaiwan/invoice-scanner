@@ -185,9 +185,7 @@ def call_ocr(image_bytes: bytes, api_key_override: str = "") -> str:
                  "image_url": {"url": f"data:image/png;base64,{b64_enhanced}"}},
                 {"type": "text",
                  "text": (
-                     "第一張是原始發票圖片，第二張是同一張圖片的紅色印章強化版本。\n"
-                     "請辨識兩張圖片中所有文字，直接輸出，不需說明。\n"
-                     "特別注意紅色印章內的發票號碼（格式：2英文字母+8位數字）。"
+                     "請辨識圖片中所有文字，直接輸出，不需說明。\n"
                  )},
             ],
         }],

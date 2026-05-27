@@ -1,11 +1,3 @@
-"""
-invoice_scanner.py — 發票中獎掃描器
-
-Streamlit Cloud Secrets:
-    OCR_API_KEY  = "rtx_live_..."
-    OCR_ENDPOINT = "https://rtx-ocr.arthurlin.dev/v1"
-"""
-
 import streamlit as st
 import base64
 import re
@@ -16,7 +8,6 @@ from openai import OpenAI as _OpenAI
 
 # ── 頁面設定 ──────────────────────────────────────────────
 st.set_page_config(page_title="發票中獎掃描器", page_icon="🎰", layout="wide")
-
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&family=Space+Mono:wght@400;700&display=swap');
@@ -107,7 +98,6 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-
 # ── Secrets ───────────────────────────────────────────────
 def get_secret(key, default=""):
     try:
@@ -117,7 +107,6 @@ def get_secret(key, default=""):
 
 OCR_ENDPOINT = get_secret("OCR_ENDPOINT", "https://rtx-ocr.arthurlin.dev/v1")
 OCR_API_KEY  = get_secret("OCR_API_KEY", "")
-
 
 # ── 中獎規則 ──────────────────────────────────────────────
 def check_prize(invoice_num: str, winning: dict) -> dict | None:
@@ -148,19 +137,16 @@ def check_prize(invoice_num: str, winning: dict) -> dict | None:
                 return {"name": name, "amount": amount}
     return None
 
-
 # ── OCR ───────────────────────────────────────────────────
 def call_ocr(image_bytes: bytes, api_key_override: str = "") -> str:
     key = api_key_override.strip() or OCR_API_KEY
     if not key:
         raise RuntimeError("OCR_API_KEY 未設定")
-
     # Pillow 轉標準 PNG（去除 EXIF/ICC Profile 等雜訊）
     img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     b64 = base64.b64encode(buf.getvalue()).decode()
-
     client = _OpenAI(base_url=OCR_ENDPOINT, api_key=key)
     resp = client.chat.completions.create(
         model="chandra",
@@ -170,32 +156,23 @@ def call_ocr(image_bytes: bytes, api_key_override: str = "") -> str:
                 {"type": "image_url",
                  "image_url": {"url": f"data:image/png;base64,{b64}"}},
                 {"type": "text",
-                 "text": """請辨識圖片中所有的台灣統一發票號碼。
-
-發票號碼有兩種格式：
-1. 電子發票證明聯：2個英文字母 + 連字號 + 8位數字，例如 ZM-89179735、ZJ-90717919
-2. 傳統紙本發票：右上角紅色印章內的 2個英文字母 + 8位數字，例如 AY78797529
-
-請找出圖片中【所有】發票號碼，每行輸出一個，格式統一為「XX-XXXXXXXX」。
-只輸出發票號碼清單，不需要其他說明。"""},
+                 "text": "請辨識圖片中所有文字，直接輸出，不需說明。"},
             ],
         }],
     )
     return resp.choices[0].message.content
 
-
 # ── 擷取發票號碼（簡單可靠）────────────────────────────────
 def extract_invoice_numbers(text: str) -> list[str]:
-    """從 OCR 回傳文字中擷取發票號碼（相容電子發票與傳統紙本兩種格式）。"""
+    # 修改後的 Regex: [-\s]? 允許連字號或空白
+    found = re.findall(r"[A-Za-z]{2}[-\s]?\d{8}", text)
     result, seen = [], set()
-    # 匹配：2英文 + 可選連字號 + 8數字
-    for m in re.finditer(r"[A-Za-z]{2}-?\d{8}", text):
-        n = re.sub(r"[^A-Za-z0-9]", "", m.group()).upper()
+    for num in found:
+        n = re.sub(r"[^A-Za-z0-9]", "", num).upper()
         if len(n) == 10 and n not in seen:
             seen.add(n)
             result.append(n[:2] + "-" + n[2:])
     return result
-
 
 # ── 側邊欄 ────────────────────────────────────────────────
 with st.sidebar:
@@ -204,7 +181,6 @@ with st.sidebar:
                                placeholder="留空則使用 Secrets 設定")
     st.caption(f"端點：`{OCR_ENDPOINT}`")
     st.caption(f"Secrets Key：{'✅ 已設定' if OCR_API_KEY else '❌ 未設定'}")
-
     st.markdown("---")
     st.markdown("### 🏆 中獎規則")
     st.markdown("""
@@ -220,10 +196,8 @@ with st.sidebar:
 | 六獎   | 末3碼與頭獎相同 | 200元 |
 """)
 
-
 # ── 主介面 ────────────────────────────────────────────────
 col_l, col_r = st.columns([1, 1], gap="large")
-
 with col_l:
     st.markdown("#### 📸 上傳發票圖片")
     uploaded_files = st.file_uploader(
@@ -235,7 +209,6 @@ with col_l:
     if uploaded_files:
         for f in uploaded_files:
             st.image(Image.open(f), caption=f.name, use_container_width=True)
-
     st.markdown("---")
     st.markdown("#### 🎯 填入本期中獎號碼")
     ca, cb = st.columns(2)
@@ -246,7 +219,6 @@ with col_l:
         first_input   = st.text_area("頭獎（最多3組，每行一組）",
                                      placeholder="12345678\n23456789\n34567890",
                                      height=120)
-
     winning = {
         "special": [special_input.strip()] if special_input.strip() else [],
         "super":   [super_input.strip()]   if super_input.strip()   else [],
@@ -272,7 +244,6 @@ with col_r:
         unsafe_allow_html=True,
     )
 
-
 # ── 掃描按鈕 ──────────────────────────────────────────────
 st.markdown("<br>", unsafe_allow_html=True)
 scan = st.button("🎰 開始掃描發票", use_container_width=True, type="primary")
@@ -285,13 +256,11 @@ if scan:
         err = "⚠️ 請先上傳發票圖片"
     elif not any_filled:
         err = "⚠️ 請先填入本期中獎號碼"
-
     if err:
         (st.error if err.startswith("❌") else st.warning)(err)
     else:
         wins, loses, ocr_logs = [], [], []
         prog = st.progress(0, text="辨識中...")
-
         for idx, f in enumerate(uploaded_files):
             prog.progress(idx / len(uploaded_files),
                           text=f"辨識第 {idx+1}/{len(uploaded_files)} 張：{f.name}")
@@ -307,9 +276,7 @@ if scan:
                     ocr_logs[-1]["note"] = "未偵測到發票號碼"
             except Exception as e:
                 st.error(f"❌ {f.name}：{e}")
-
         prog.progress(1.0, text="掃描完成！")
-
         # 統計
         total = len(wins) + len(loses)
         st.markdown("---")
@@ -322,9 +289,7 @@ if scan:
         ]:
             col.markdown(f'<div class="stat-box"><div class="stat-num" style="color:{color}">{num}</div>'
                          f'<div class="stat-lbl">{lbl}</div></div>', unsafe_allow_html=True)
-
         st.markdown("<br>", unsafe_allow_html=True)
-
         # 中獎結果
         with col_r:
             result_slot.empty()
@@ -346,7 +311,6 @@ if scan:
                     <div style="color:rgba(255,255,255,.4);font-size:1.05rem;margin-top:.5rem">很遺憾，本期未中獎</div>
                     <div style="color:rgba(255,255,255,.2);font-size:.8rem;margin-top:.3rem">繼續加油！下期再試！</div>
                 </div>""", unsafe_allow_html=True)
-
         # 發票清單
         if total > 0:
             st.markdown("#### 📋 發票號碼清單")
@@ -362,7 +326,6 @@ if scan:
                     f'<div class="invoice-num">{entry["invoice"]} {badge}</div>'
                     f'<div class="invoice-meta">{entry["file"]}</div></div>',
                     unsafe_allow_html=True)
-
         # OCR 原始結果
         with st.expander("🔍 查看 OCR 原始辨識結果"):
             for log in ocr_logs:
@@ -374,7 +337,6 @@ if scan:
                 else:
                     st.caption(log.get("note", "未偵測到發票號碼"))
                 st.markdown("---")
-
         st.markdown("""
 <div class="notice-bar" style="margin-top:1.5rem">
 ⚠️ <strong>再次提醒：</strong>以上辨識與對獎結果僅供初步參考，不保證 100% 準確。

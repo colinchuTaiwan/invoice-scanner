@@ -1,22 +1,13 @@
-"""
-invoice_scanner.py — 發票中獎掃描器
-
-Streamlit Cloud Secrets:
-    OCR_API_KEY  = "rtx_live_..."
-    OCR_ENDPOINT = "https://rtx-ocr.arthurlin.dev/v1"
-"""
-
 import streamlit as st
 import base64
 import re
 import io
 import json
-from PIL import Image, ImageEnhance
+from PIL import Image
 from openai import OpenAI as _OpenAI
 
 # ── 頁面設定 ──────────────────────────────────────────────
 st.set_page_config(page_title="發票中獎掃描器", page_icon="🎰", layout="wide")
-
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&family=Space+Mono:wght@400;700&display=swap');
@@ -146,72 +137,40 @@ def check_prize(invoice_num: str, winning: dict) -> dict | None:
                 return {"name": name, "amount": amount}
     return None
 
-# ── OCR (Advanced) ────────────────────────────────────────
+# ── OCR ───────────────────────────────────────────────────
 def call_ocr(image_bytes: bytes, api_key_override: str = "") -> str:
     key = api_key_override.strip() or OCR_API_KEY
     if not key:
         raise RuntimeError("OCR_API_KEY 未設定")
-
-    # 1. 準備原始圖片
-    img_orig = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-    
-    # 2. 建立增強對比度的圖片
-    enhancer = ImageEnhance.Contrast(img_orig)
-    img_enhanced = enhancer.enhance(2.0) # 增強2倍對比度
-
-    # 3. 將兩張圖片轉換為 Base64
-    def image_to_base64(img, format="PNG"):
-        buffered = io.BytesIO()
-        img.save(buffered, format=format)
-        return base64.b64encode(buffered.getvalue()).decode()
-
-    b64_orig = image_to_base64(img_orig)
-    b64_enhanced = image_to_base64(img_enhanced)
-    
-    # 4. 呼叫 API (優化 Prompt)
+    img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    b64 = base64.b64encode(buf.getvalue()).decode()
     client = _OpenAI(base_url=OCR_ENDPOINT, api_key=key)
     resp = client.chat.completions.create(
         model="chandra",
         messages=[{
             "role": "user",
             "content": [
-                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64_orig}"}},
+                {"type": "image_url",
+                 "image_url": {"url": f"data:image/png;base64,{b64}"}},
                 {"type": "text",
-                 "text": (
-                     "請找出圖片中所有發票號碼。\n"
-                     "發票號碼可能歪斜，或英文字母部分被遮蔽、磨損不清晰。\n"
-                     "只要有完整的 8 位數字，就必須列出。格式請呈現為「兩個英文字母 + 8位數字」（例如 AB-12345678 或 AB 12345678），"
-                     "若英文字母真的完全無法辨識，只要取出後面的數字（例如 12345678）。\n"
-                     "只輸出發票號碼列表，一行一個，不要任何解釋或額外文字。"
-                 )},
+                 "text": "請辨識圖片中所有文字，直接輸出，不需說明。"},
             ],
         }],
     )
     return resp.choices[0].message.content
 
-# ── 擷取發票號碼（高容錯）────────────────────────────────
+# ── 擷取發票號碼 ──────────────────────────────────────────
 def extract_invoice_numbers(text: str) -> list[str]:
-    # 允許前置 2 個字母或 2 個問號（可有可無），中間可能有空白或連字號，後面緊跟 8 位數字
-    found = re.findall(r"(?:[A-Za-z?]{2}[-\s]?)?\b\d{8}\b", text)
+    # [-\s]? 允許連字號或空白作為分隔符（OCR 有時在字母與數字間加空格）
+    found = re.findall(r"[A-Za-z]{2}[-\s]?\d{8}", text)
     result, seen = [], set()
-    
     for num in found:
-        # 去除空白與連字號，並轉大寫
-        clean_num = re.sub(r"[-\s]", "", num).upper()
-        
-        # 1. 如果長度為 10 碼 (例如 AB12345678 或 ??12345678)
-        if len(clean_num) == 10:
-            formatted = clean_num[:2] + "-" + clean_num[2:]
-            if formatted not in seen:
-                seen.add(formatted)
-                result.append(formatted)
-        # 2. 如果長度只有 8 碼 (代表英文字母完全被遮蔽，只抓到數字)
-        elif len(clean_num) == 8:
-            formatted = "??-" + clean_num
-            if formatted not in seen:
-                seen.add(formatted)
-                result.append(formatted)
-                
+        n = re.sub(r"[^A-Za-z0-9]", "", num).upper()
+        if len(n) == 10 and n not in seen:
+            seen.add(n)
+            result.append(n[:2] + "-" + n[2:])
     return result
 
 # ── 側邊欄 ────────────────────────────────────────────────
@@ -317,7 +276,6 @@ if scan:
             except Exception as e:
                 st.error(f"❌ {f.name}：{e}")
         prog.progress(1.0, text="掃描完成！")
-        # 統計
         total = len(wins) + len(loses)
         st.markdown("---")
         s1, s2, s3, s4 = st.columns(4)
@@ -330,7 +288,6 @@ if scan:
             col.markdown(f'<div class="stat-box"><div class="stat-num" style="color:{color}">{num}</div>'
                          f'<div class="stat-lbl">{lbl}</div></div>', unsafe_allow_html=True)
         st.markdown("<br>", unsafe_allow_html=True)
-        # 中獎結果
         with col_r:
             result_slot.empty()
             if wins:
@@ -351,7 +308,6 @@ if scan:
                     <div style="color:rgba(255,255,255,.4);font-size:1.05rem;margin-top:.5rem">很遺憾，本期未中獎</div>
                     <div style="color:rgba(255,255,255,.2);font-size:.8rem;margin-top:.3rem">繼續加油！下期再試！</div>
                 </div>""", unsafe_allow_html=True)
-        # 發票清單
         if total > 0:
             st.markdown("#### 📋 發票號碼清單")
             for entry in wins + loses:
@@ -366,7 +322,6 @@ if scan:
                     f'<div class="invoice-num">{entry["invoice"]} {badge}</div>'
                     f'<div class="invoice-meta">{entry["file"]}</div></div>',
                     unsafe_allow_html=True)
-        # OCR 原始結果
         with st.expander("🔍 查看 OCR 原始辨識結果"):
             for log in ocr_logs:
                 st.markdown(f"**{log['file']}**")

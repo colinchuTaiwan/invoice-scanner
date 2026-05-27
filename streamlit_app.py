@@ -138,53 +138,24 @@ def check_prize(invoice_num: str, winning: dict) -> dict | None:
     return None
 
 # ── OCR ───────────────────────────────────────────────────
-def enhance_for_red_stamp(img: Image.Image) -> Image.Image:
-    """強化紅色印章字體的對比度，幫助 OCR 辨識傳統紙本發票號碼。"""
-    import numpy as np
-    arr = np.array(img)
-    r, g, b = arr[:,:,0], arr[:,:,1], arr[:,:,2]
-    # 找出紅色區域（R 高、G/B 低）
-    red_mask = (r.astype(int) - g.astype(int) > 40) & \
-               (r.astype(int) - b.astype(int) > 40) & \
-               (r > 120)
-    # 紅色區域變黑、其他變白 → 高對比黑白圖
-    enhanced = np.ones_like(arr) * 255
-    enhanced[red_mask] = [0, 0, 0]
-    return Image.fromarray(enhanced.astype(np.uint8))
-
-
 def call_ocr(image_bytes: bytes, api_key_override: str = "") -> str:
     key = api_key_override.strip() or OCR_API_KEY
     if not key:
         raise RuntimeError("OCR_API_KEY 未設定")
-
-    img_orig = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-
-    # ── 原圖（PNG 標準化）────────────────────────────────
-    buf1 = io.BytesIO()
-    img_orig.save(buf1, format="PNG")
-    b64_orig = base64.b64encode(buf1.getvalue()).decode()
-
-    # ── 紅色印章強化圖 ────────────────────────────────────
-    img_enhanced = enhance_for_red_stamp(img_orig)
-    buf2 = io.BytesIO()
-    img_enhanced.save(buf2, format="PNG")
-    b64_enhanced = base64.b64encode(buf2.getvalue()).decode()
-
+    img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    b64 = base64.b64encode(buf.getvalue()).decode()
     client = _OpenAI(base_url=OCR_ENDPOINT, api_key=key)
-
-    # 兩張圖同時送給 OCR，讓模型互補辨識
     resp = client.chat.completions.create(
         model="chandra",
         messages=[{
             "role": "user",
             "content": [
                 {"type": "image_url",
-                 "image_url": {"url": f"data:image/png;base64,{b64_orig}"}},
+                 "image_url": {"url": f"data:image/png;base64,{b64}"}},
                 {"type": "text",
-                 "text": (
-                     "請找出圖片中所有文字。\n"
-                 )},
+                 "text": "請辨識圖片中所有文字，直接輸出，不需說明。"},
             ],
         }],
     )

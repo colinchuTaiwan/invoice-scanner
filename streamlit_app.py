@@ -177,10 +177,10 @@ def extract_invoice_numbers(text: str) -> list[str]:
 
 # ── 側邊欄 ────────────────────────────────────────────────
 with st.sidebar:
-    st.markdown("### 🔧 API 設定")
-    manual_key = st.text_input("手動輸入 API Key（測試用）", type="password",
-                               placeholder="留空則使用 Secrets 設定")
-    st.caption(f"端點：`{OCR_ENDPOINT}`")
+    #st.markdown("### 🔧 API 設定")
+    #manual_key = st.text_input("手動輸入 API Key（測試用）", type="password",
+    #                           placeholder="留空則使用 Secrets 設定")
+    #st.caption(f"端點：`{OCR_ENDPOINT}`")
     st.caption(f"Secrets Key：{'✅ 已設定' if OCR_API_KEY else '❌ 未設定'}")
     st.markdown("---")
     st.markdown("### 🏆 中獎規則")

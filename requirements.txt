@@ -1,4 +1,5 @@
 streamlit
-httpx
-pillow
 openai
+pillow
+httpx
+numpy

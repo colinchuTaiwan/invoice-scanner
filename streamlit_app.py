@@ -180,7 +180,9 @@ def extract_invoice_numbers(text: str) -> list[str]:
 
 
 def call_ocr(image_bytes: bytes, filename: str, api_key_override: str = "") -> str:
-    """呼叫 OCR API，自動嘗試多種路徑格式。"""
+    """呼叫 rtx-ocr API（OpenAI SDK + model chandra）。"""
+    from openai import OpenAI as _OpenAI
+
     key = api_key_override.strip() or OCR_API_KEY
     if not key:
         raise RuntimeError("OCR_API_KEY 未設定，請在 Streamlit Secrets 加入 OCR_API_KEY")
@@ -190,29 +192,14 @@ def call_ocr(image_bytes: bytes, filename: str, api_key_override: str = "") -> s
             "png": "image/png",  "webp": "image/webp"}.get(ext, "image/jpeg")
     b64  = base64.b64encode(image_bytes).decode()
 
-    headers = {
-        "Authorization": f"Bearer {key}",
-        "Content-Type":  "application/json",
-    }
+    client = _OpenAI(
+        base_url=OCR_ENDPOINT,
+        api_key=key,
+    )
 
-    base = OCR_ENDPOINT.rstrip("/")
-
-    # 嘗試的路徑順序
-    candidates = [
-        f"{base}/chat/completions",   # OpenAI-compatible
-        f"{base}/ocr",                # Surya / 自訂 OCR server
-        f"{base}/recognize",          # 其他常見路徑
-        base,                         # 端點本身即為 API
-    ]
-    # 若端點已含特定路徑，只試該路徑
-    for suffix in ("/chat/completions", "/ocr", "/recognize"):
-        if base.endswith(suffix):
-            candidates = [base]
-            break
-
-    openai_payload = {
-        "model": "gpt-4o",
-        "messages": [{
+    response = client.chat.completions.create(
+        model="chandra",
+        messages=[{
             "role": "user",
             "content": [
                 {"type": "image_url",
@@ -224,44 +211,8 @@ def call_ocr(image_bytes: bytes, filename: str, api_key_override: str = "") -> s
                  )},
             ],
         }],
-        "max_tokens": 2000,
-    }
-    simple_payload = {
-        "image":     b64,
-        "mime_type": mime,
-        "prompt":    "辨識所有台灣統一發票號碼及圖片中所有文字",
-    }
-
-    last_err = None
-    with httpx.Client(timeout=60) as client:
-        for url in candidates:
-            payload = openai_payload if "completions" in url else simple_payload
-            try:
-                resp = client.post(url, json=payload, headers=headers)
-                if resp.status_code == 404:
-                    last_err = f"404：{url}"
-                    continue
-                resp.raise_for_status()
-                data = resp.json()
-                # 解析各種回傳格式
-                if "choices" in data:
-                    return data["choices"][0]["message"]["content"]
-                if "text" in data:
-                    return data["text"]
-                if "result" in data:
-                    return data["result"]
-                if "ocr_text" in data:
-                    return data["ocr_text"]
-                return str(data)
-            except httpx.HTTPStatusError as e:
-                last_err = f"{e.response.status_code}：{url}"
-                continue
-
-    raise RuntimeError(
-        f"所有路徑均失敗（最後錯誤：{last_err}）\n"
-        f"嘗試過：{', '.join(candidates)}\n"
-        f"請向 API 提供方確認正確的端點路徑，並更新 Secrets 中的 OCR_ENDPOINT。"
     )
+    return response.choices[0].message.content
 
 
 # ── 側邊欄：中獎規則說明 ──────────────────────────────────

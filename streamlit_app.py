@@ -142,7 +142,6 @@ def call_ocr(image_bytes: bytes, api_key_override: str = "") -> str:
     key = api_key_override.strip() or OCR_API_KEY
     if not key:
         raise RuntimeError("OCR_API_KEY 未設定")
-    # Pillow 轉標準 PNG（去除 EXIF/ICC Profile 等雜訊）
     img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
     buf = io.BytesIO()
     img.save(buf, format="PNG")
@@ -162,9 +161,9 @@ def call_ocr(image_bytes: bytes, api_key_override: str = "") -> str:
     )
     return resp.choices[0].message.content
 
-# ── 擷取發票號碼（簡單可靠）────────────────────────────────
+# ── 擷取發票號碼 ──────────────────────────────────────────
 def extract_invoice_numbers(text: str) -> list[str]:
-    # 修改後的 Regex: [-\s]? 允許連字號或空白
+    # [-\s]? 允許連字號或空白作為分隔符（OCR 有時在字母與數字間加空格）
     found = re.findall(r"[A-Za-z]{2}[-\s]?\d{8}", text)
     result, seen = [], set()
     for num in found:
@@ -277,7 +276,6 @@ if scan:
             except Exception as e:
                 st.error(f"❌ {f.name}：{e}")
         prog.progress(1.0, text="掃描完成！")
-        # 統計
         total = len(wins) + len(loses)
         st.markdown("---")
         s1, s2, s3, s4 = st.columns(4)
@@ -290,7 +288,6 @@ if scan:
             col.markdown(f'<div class="stat-box"><div class="stat-num" style="color:{color}">{num}</div>'
                          f'<div class="stat-lbl">{lbl}</div></div>', unsafe_allow_html=True)
         st.markdown("<br>", unsafe_allow_html=True)
-        # 中獎結果
         with col_r:
             result_slot.empty()
             if wins:
@@ -311,7 +308,6 @@ if scan:
                     <div style="color:rgba(255,255,255,.4);font-size:1.05rem;margin-top:.5rem">很遺憾，本期未中獎</div>
                     <div style="color:rgba(255,255,255,.2);font-size:.8rem;margin-top:.3rem">繼續加油！下期再試！</div>
                 </div>""", unsafe_allow_html=True)
-        # 發票清單
         if total > 0:
             st.markdown("#### 📋 發票號碼清單")
             for entry in wins + loses:
@@ -326,7 +322,6 @@ if scan:
                     f'<div class="invoice-num">{entry["invoice"]} {badge}</div>'
                     f'<div class="invoice-meta">{entry["file"]}</div></div>',
                     unsafe_allow_html=True)
-        # OCR 原始結果
         with st.expander("🔍 查看 OCR 原始辨識結果"):
             for log in ocr_logs:
                 st.markdown(f"**{log['file']}**")

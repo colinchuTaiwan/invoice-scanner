@@ -134,7 +134,7 @@ def call_ocr(image_bytes: bytes, api_key_override=""):
 請找出圖片中所有台灣電子發票號碼。
 
 格式：
-AB-12345678
+兩個英文字母+8位數字(如ab 12345678 or ab-12345678)
 
 只輸出發票號碼。
 一行一個。

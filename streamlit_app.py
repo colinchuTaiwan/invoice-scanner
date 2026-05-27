@@ -182,15 +182,18 @@ def extract_invoice_numbers(text: str) -> list[str]:
 def call_ocr(image_bytes: bytes, filename: str, api_key_override: str = "") -> str:
     """呼叫 rtx-ocr API（OpenAI SDK + model chandra）。"""
     from openai import OpenAI as _OpenAI
+    import io
 
     key = api_key_override.strip() or OCR_API_KEY
     if not key:
         raise RuntimeError("OCR_API_KEY 未設定，請在 Streamlit Secrets 加入 OCR_API_KEY")
 
-    ext  = filename.rsplit(".", 1)[-1].lower()
-    mime = {"jpg": "image/jpeg", "jpeg": "image/jpeg",
-            "png": "image/png",  "webp": "image/webp"}.get(ext, "image/jpeg")
-    b64  = base64.b64encode(image_bytes).decode()
+    # ── 用 Pillow 重新編碼為標準 PNG，避免 server 無法識別原始格式 ──
+    img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    png_bytes = buf.getvalue()
+    b64 = base64.b64encode(png_bytes).decode()
 
     client = _OpenAI(
         base_url=OCR_ENDPOINT,
@@ -203,7 +206,7 @@ def call_ocr(image_bytes: bytes, filename: str, api_key_override: str = "") -> s
             "role": "user",
             "content": [
                 {"type": "image_url",
-                 "image_url": {"url": f"data:{mime};base64,{b64}"}},
+                 "image_url": {"url": f"data:image/png;base64,{b64}"}},
                 {"type": "text",
                  "text": (
                      "請辨識圖片中所有台灣統一發票號碼（格式：2英文字母+8位數字，例如 AB-12345678）。"
@@ -323,7 +326,7 @@ if scan:
             prog.progress(idx / len(uploaded_files),
                           text=f"辨識第 {idx+1}/{len(uploaded_files)} 張：{f.name}")
             try:
-                raw   = call_ocr(f.read(), f.name, manual_key)
+                raw   = call_ocr(f.getvalue(), f.name, manual_key)
                 invs  = extract_invoice_numbers(raw)
                 ocr_logs.append({"file": f.name, "text": raw, "invoices": invs})
 

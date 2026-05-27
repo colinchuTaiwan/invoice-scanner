@@ -155,7 +155,7 @@ def call_ocr(image_bytes: bytes, api_key_override: str = "") -> str:
                 {"type": "image_url",
                  "image_url": {"url": f"data:image/png;base64,{b64}"}},
                 {"type": "text",
-                 "text": "請辨識圖片中所有發票號碼，直接輸出，不需說明。"
+                 "text": "請辨識圖片中所有文字,從文字中辨識發票號碼。"
                  "發票號碼格式為「兩個英文字母 + 8位數字」（例如 AB-12345678 或 AB 12345678）,直接輸出發票號碼，不需說明"              
                  },
             ],

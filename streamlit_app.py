@@ -179,7 +179,7 @@ def call_ocr(image_bytes: bytes, api_key_override: str = "") -> str:
                 {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64_enhanced}"}},
                 {"type": "text",
                  "text": (
-                     "請找出圖片中所有台灣電子發票號碼。\n"
+                     "請找出圖片中所有發票號碼。\n"
                      "發票號碼可能歪斜，或英文字母部分被遮蔽、磨損不清晰。\n"
                      "只要有完整的 8 位數字，就必須列出。格式請呈現為「兩個英文字母 + 8位數字」（例如 AB-12345678 或 AB 12345678），"
                      "若英文字母真的完全無法辨識，只要取出後面的數字（例如 12345678）。\n"

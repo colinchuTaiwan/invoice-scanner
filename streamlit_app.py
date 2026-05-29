@@ -3,6 +3,8 @@ import base64
 import re
 import io
 import json
+import os
+import requests as _req
 from PIL import Image
 from openai import OpenAI as _OpenAI
 
@@ -62,6 +64,24 @@ html, body, [class*="css"] { font-family: 'Noto Sans TC', sans-serif; }
 .stat-box { background:#111118; border:1px solid rgba(255,255,255,0.08); border-radius:10px; padding:1rem; text-align:center; }
 .stat-num { font-size:1.8rem; font-weight:700; font-family:'Space Mono',monospace; color:#00ffb4; }
 .stat-lbl { font-size:0.72rem; color:rgba(255,255,255,0.38); margin-top:2px; }
+.visitor-bar {
+    background: linear-gradient(135deg, #0d0d2e, #1a0a2e);
+    border: 1px solid rgba(0,180,255,0.25);
+    border-radius: 10px;
+    padding: 0.7rem 1.4rem;
+    margin-bottom: 1.2rem;
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    font-size: 0.85rem;
+    color: rgba(255,255,255,0.55);
+}
+.visitor-count {
+    font-family: 'Space Mono', monospace;
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: #00b4ff;
+}
 @keyframes pglow {
     0%,100% { box-shadow:0 0 20px rgba(0,255,136,0.3); }
     50%      { box-shadow:0 0 45px rgba(0,255,136,0.65); }
@@ -78,6 +98,86 @@ html, body, [class*="css"] { font-family: 'Noto Sans TC', sans-serif; }
 }
 </style>
 """, unsafe_allow_html=True)
+
+# ── Secrets ───────────────────────────────────────────────
+def get_secret(key, default=""):
+    try:
+        return st.secrets.get(key, default)
+    except Exception:
+        return default
+
+OCR_ENDPOINT    = get_secret("OCR_ENDPOINT", "https://rtx-ocr.arthurlin.dev/v1")
+OCR_API_KEY     = get_secret("OCR_API_KEY", "")
+FIREBASE_DB_URL = get_secret("FIREBASE_DB_URL", "")  # e.g. https://your-project-default-rtdb.firebaseio.com
+FIREBASE_SECRET = get_secret("FIREBASE_SECRET", "")  # Database secret
+
+# ── Firebase 訪客計數器（ETag Transaction） ───────────────
+def _firebase_headers(with_auth: bool = True) -> dict:
+    h = {"Content-Type": "application/json"}
+    if with_auth and FIREBASE_SECRET:
+        h["X-Firebase-Auth"] = FIREBASE_SECRET
+    return h
+
+def increment_visitor() -> int | None:
+    """
+    使用 Firebase REST Transaction（ETag + If-Match）安全遞增計數。
+    最多重試 5 次，失敗時回傳 None（靜默忽略，不影響主功能）。
+    """
+    if not FIREBASE_DB_URL:
+        return None
+    url = f"{FIREBASE_DB_URL.rstrip('/')}/invoice_scanner/visitors.json"
+    for _ in range(5):
+        try:
+            r = _req.get(url, headers={**_firebase_headers(), "X-Firebase-ETag": "true"}, timeout=5)
+            if r.status_code != 200:
+                return None
+            etag    = r.headers.get("ETag", "")
+            current = r.json() or 0
+            new_val = int(current) + 1
+            put = _req.put(
+                url,
+                data=json.dumps(new_val),
+                headers={**_firebase_headers(), "If-Match": etag},
+                timeout=5,
+            )
+            if put.status_code == 200:
+                return put.json()   # 成功，回傳最新值
+            if put.status_code == 412:
+                continue            # ETag 衝突，重試
+            return None
+        except Exception:
+            return None
+    return None
+
+def get_visitor_count() -> int | None:
+    if not FIREBASE_DB_URL:
+        return None
+    url = f"{FIREBASE_DB_URL.rstrip('/')}/invoice_scanner/visitors.json"
+    try:
+        r = _req.get(url, headers=_firebase_headers(), timeout=5)
+        return int(r.json() or 0) if r.status_code == 200 else None
+    except Exception:
+        return None
+
+# ── 訪客計數：每個 session 只計算一次 ────────────────────
+if "visitor_counted" not in st.session_state:
+    st.session_state.visitor_counted = True
+    st.session_state.visitor_total   = increment_visitor()
+else:
+    if st.session_state.get("visitor_total") is None:
+        st.session_state.visitor_total = get_visitor_count()
+
+visitor_total = st.session_state.visitor_total
+
+# ── 訪客計數顯示列 ────────────────────────────────────────
+if visitor_total is not None:
+    st.markdown(
+        f'<div class="visitor-bar">'
+        f'👥 本站累計訪客：<span class="visitor-count">{visitor_total:,}</span> 人次'
+        f'<span style="margin-left:auto;font-size:0.75rem;opacity:0.4">由 Firebase 即時統計</span>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
 
 # ── 注意事項 ──────────────────────────────────────────────
 st.markdown("""
@@ -97,16 +197,6 @@ st.markdown("""
     <p>上傳發票圖片，自動辨識號碼並比對中獎號碼 — 結果僅供參考，請以財政部官方公告為準</p>
 </div>
 """, unsafe_allow_html=True)
-
-# ── Secrets ───────────────────────────────────────────────
-def get_secret(key, default=""):
-    try:
-        return st.secrets.get(key, default)
-    except Exception:
-        return default
-
-OCR_ENDPOINT = get_secret("OCR_ENDPOINT", "https://rtx-ocr.arthurlin.dev/v1")
-OCR_API_KEY  = get_secret("OCR_API_KEY", "")
 
 # ── 中獎規則 ──────────────────────────────────────────────
 def check_prize(invoice_num: str, winning: dict) -> dict | None:
@@ -163,7 +253,6 @@ def call_ocr(image_bytes: bytes, api_key_override: str = "") -> str:
 
 # ── 擷取發票號碼 ──────────────────────────────────────────
 def extract_invoice_numbers(text: str) -> list[str]:
-    # [-\s]? 允許連字號或空白作為分隔符（OCR 有時在字母與數字間加空格）
     found = re.findall(r"[A-Za-z]{2}[-\s]?\d{8}", text)
     result, seen = [], set()
     for num in found:
@@ -173,13 +262,33 @@ def extract_invoice_numbers(text: str) -> list[str]:
             result.append(n[:2] + "-" + n[2:])
     return result
 
+# ── 意見回饋 QR Code（主頁面用，掃描後顯示） ─────────────
+def show_feedback_qrcode():
+    """顯示意見表單的 QR Code 圖片與說明文字。"""
+    st.markdown("---")
+    st.markdown("### 📣 歡迎填寫意見表單")
+    col_qr, col_txt = st.columns([1, 2])
+    with col_qr:
+        # 請將 QR Code 圖片命名為「意見表單QRCode.png」放在與 app.py 同一資料夾
+        if os.path.exists("意見表單QRCode.png"):
+            st.image("意見表單QRCode.png", width=140)
+    with col_txt:
+        st.markdown(
+            "<div style='color:rgba(255,255,255,0.6);font-size:0.9rem;padding-top:0.5rem'>"
+            "掃描左側 QR Code，協助我們把掃描器做得更好！<br>"
+            "<span style='color:rgba(255,255,255,0.3);font-size:0.78rem'>"
+            "（圖片未顯示？請將 QR Code 命名為<br>「意見表單QRCode.png」放在同一資料夾）"
+            "</span></div>",
+            unsafe_allow_html=True,
+        )
+
 # ── 側邊欄 ────────────────────────────────────────────────
 with st.sidebar:
     st.markdown("### 🔧 API 設定")
     manual_key = st.text_input("手動輸入 API Key（測試用）", type="password",
                                placeholder="留空則使用 Secrets 設定")
-    #st.caption(f"端點：`{OCR_ENDPOINT}`")
     st.caption(f"Secrets Key：{'✅ 已設定' if OCR_API_KEY else '❌ 未設定'}")
+
     st.markdown("---")
     st.markdown("### 🏆 中獎規則")
     st.markdown("""
@@ -187,13 +296,22 @@ with st.sidebar:
 |------|---------|------|
 | 特別獎 | 8碼完全相同 | 1,000萬元 |
 | 特獎   | 8碼完全相同 | 200萬元 |
-| 頭獎   | 8碼完全相同| 20萬元 |
+| 頭獎   | 8碼完全相同 | 20萬元 |
 | 二獎   | 末7碼與頭獎相同 | 4萬元 |
 | 三獎   | 末6碼與頭獎相同 | 1萬元 |
 | 四獎   | 末5碼與頭獎相同 | 4,000元 |
 | 五獎   | 末4碼與頭獎相同 | 1,000元 |
 | 六獎   | 末3碼與頭獎相同 | 200元 |
 """)
+
+    # ── 側邊欄意見回饋 QR Code ────────────────────────────
+    st.markdown("---")
+    st.markdown("### 💬 意見回饋")
+    if os.path.exists("意見表單QRCode.png"):
+        st.image("意見表單QRCode.png", caption="掃描 QR Code 填寫意見表單",
+                 use_container_width=True)
+    else:
+        st.caption("請將 QR Code 圖片命名為「意見表單QRCode.png」放在同一資料夾。")
 
 # ── 主介面 ────────────────────────────────────────────────
 col_l, col_r = st.columns([1, 1], gap="large")
@@ -337,3 +455,6 @@ if scan:
 ⚠️ <strong>再次提醒：</strong>以上辨識與對獎結果僅供初步參考，不保證 100% 準確。
 中獎與否悉以<strong>財政部官方公告</strong>為準，請務必自行保留並核對實體發票，以免影響您的領獎權益。
 </div>""", unsafe_allow_html=True)
+
+        # 掃描完成後顯示意見表單 QR Code
+        show_feedback_qrcode()

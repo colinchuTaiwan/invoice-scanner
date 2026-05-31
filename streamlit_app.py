@@ -98,6 +98,24 @@ html, body, [class*="css"] { font-family: 'Noto Sans TC', sans-serif; }
     color:#000 !important; font-weight:700 !important; border:none !important;
     border-radius:8px !important; font-family:'Space Mono',monospace !important;
 }
+.nav-link {
+    display:block;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.09);
+    border-radius: 8px;
+    padding: 0.55rem 0.85rem;
+    margin-bottom: 6px;
+    color: rgba(255,255,255,0.75) !important;
+    text-decoration: none !important;
+    font-size: 0.85rem;
+    transition: background 0.15s, border-color 0.15s;
+}
+.nav-link:hover {
+    background: rgba(0,255,180,0.08);
+    border-color: rgba(0,255,180,0.35);
+    color: #00ffb4 !important;
+}
+.nav-icon { margin-right: 6px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -354,6 +372,26 @@ with st.sidebar:
 | 五獎   | 末4碼與頭獎相同 | 1,000元 |
 | 六獎   | 末3碼與頭獎相同 | 200元 |
 """)
+
+    st.markdown("---")
+    st.markdown("### 🌐 相關測驗網站")
+    NAV_LINKS = [
+        ("📖", "英文測驗挑戰網", "https://english-examine.streamlit.app/"),
+        ("➕", "數學測驗挑戰網", "https://math-examine.streamlit.app/"),
+        ("✍️", "國語測驗挑戰網", "https://chinese-examine.streamlit.app/"),
+        ("🔬", "理化測驗挑戰網", "https://science-examine.streamlit.app/"),
+        ("📜", "歷史測驗挑戰網", "https://history-examine.streamlit.app/"),
+        ("🏛️", "公民測驗挑戰網", "https://civics-examine.streamlit.app/"),
+        ("🧬", "生物測驗挑戰網", "https://biology-examine.streamlit.app/"),
+        ("🌍", "地球科學測驗網", "https://earth-science-examine.streamlit.app/"),
+        ("📋", "公文專案管理系統", "https://doc-project.streamlit.app/"),
+    ]
+    for icon, name, url in NAV_LINKS:
+        st.markdown(
+            f'<a class="nav-link" href="{url}" target="_blank">'
+            f'<span class="nav-icon">{icon}</span>{name}</a>',
+            unsafe_allow_html=True,
+        )
 
     st.markdown("---")
     st.markdown("### 💬 意見回饋")

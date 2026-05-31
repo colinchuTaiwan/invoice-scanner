@@ -100,21 +100,21 @@ html, body, [class*="css"] { font-family: 'Noto Sans TC', sans-serif; }
 }
 .nav-link {
     display:block;
-    background: rgba(255,255,255,0.07);
-    border: 1px solid rgba(255,255,255,0.18);
+    background: rgba(255,255,255,0.92);
+    border: 1px solid rgba(0,0,0,0.15);
     border-radius: 8px;
     padding: 0.55rem 0.85rem;
     margin-bottom: 6px;
-    color: #ffffff !important;
+    color: #111111 !important;
     text-decoration: none !important;
     font-size: 0.85rem;
-    font-weight: 500;
+    font-weight: 600;
     transition: background 0.15s, border-color 0.15s;
 }
 .nav-link:hover {
-    background: rgba(0,255,180,0.12);
-    border-color: rgba(0,255,180,0.5);
-    color: #00ffb4 !important;
+    background: #ffffff;
+    border-color: rgba(0,200,140,0.6);
+    color: #007a50 !important;
 }
 .nav-icon { margin-right: 6px; }
 </style>

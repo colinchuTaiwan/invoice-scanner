@@ -5,6 +5,8 @@ import io
 import json
 import os
 import requests as _req
+from pathlib import Path
+from typing import Optional, List
 from PIL import Image
 from openai import OpenAI as _OpenAI
 
@@ -100,7 +102,7 @@ html, body, [class*="css"] { font-family: 'Noto Sans TC', sans-serif; }
 """, unsafe_allow_html=True)
 
 # ── Secrets ───────────────────────────────────────────────
-def get_secret(key, default=""):
+def get_secret(key: str, default: str = "") -> str:
     try:
         return st.secrets.get(key, default)
     except Exception:
@@ -108,27 +110,49 @@ def get_secret(key, default=""):
 
 OCR_ENDPOINT    = get_secret("OCR_ENDPOINT", "https://rtx-ocr.arthurlin.dev/v1")
 OCR_API_KEY     = get_secret("OCR_API_KEY", "")
-FIREBASE_DB_URL = get_secret("FIREBASE_DB_URL", "")  # e.g. https://your-project-default-rtdb.firebaseio.com
+FIREBASE_DB_URL = get_secret("FIREBASE_DB_URL", "")  # https://your-project-default-rtdb.firebaseio.com
 FIREBASE_SECRET = get_secret("FIREBASE_SECRET", "")  # Database secret
 
-# ── Firebase 訪客計數器（ETag Transaction） ───────────────
+# =========================
+# ★ 網站識別碼
+#   每個網站只改這一行，訪客計數完全獨立互不干擾。
+#   建議只用英數字與底線，例如：
+#     "invoice_scanner" / "quiz_app" / "doc_system"
+# =========================
+SITE_ID = "invoice_scanner"
+
+# ── QR Code 圖片路徑（統一管理，避免散落各處） ───────────
+# 使用 __file__ 所在目錄，確保 Streamlit Cloud 工作目錄不同時也能正確找到
+_QR_PATH = Path(__file__).parent / "意見表單QRCode.png"
+
+# ── Firebase 訪客計數器（ETag Transaction，依 SITE_ID 獨立） ──
+# Firebase 路徑：visitors/{SITE_ID}/total
+# 各網站獨立計數，互不干擾，只需修改上方 SITE_ID 即可。
+
+def _visitor_url() -> str:
+    return f"{FIREBASE_DB_URL.rstrip('/')}/visitors/{SITE_ID}/total.json"
+
 def _firebase_headers(with_auth: bool = True) -> dict:
     h = {"Content-Type": "application/json"}
     if with_auth and FIREBASE_SECRET:
         h["X-Firebase-Auth"] = FIREBASE_SECRET
     return h
 
-def increment_visitor() -> int | None:
+def increment_visitor() -> Optional[int]:
     """
     使用 Firebase REST Transaction（ETag + If-Match）安全遞增計數。
     最多重試 5 次，失敗時回傳 None（靜默忽略，不影響主功能）。
     """
     if not FIREBASE_DB_URL:
         return None
-    url = f"{FIREBASE_DB_URL.rstrip('/')}/invoice_scanner/visitors.json"
+    url = _visitor_url()
     for _ in range(5):
         try:
-            r = _req.get(url, headers={**_firebase_headers(), "X-Firebase-ETag": "true"}, timeout=5)
+            r = _req.get(
+                url,
+                headers={**_firebase_headers(), "X-Firebase-ETag": "true"},
+                timeout=5,
+            )
             if r.status_code != 200:
                 return None
             etag    = r.headers.get("ETag", "")
@@ -149,12 +173,11 @@ def increment_visitor() -> int | None:
             return None
     return None
 
-def get_visitor_count() -> int | None:
+def get_visitor_count() -> Optional[int]:
     if not FIREBASE_DB_URL:
         return None
-    url = f"{FIREBASE_DB_URL.rstrip('/')}/invoice_scanner/visitors.json"
     try:
-        r = _req.get(url, headers=_firebase_headers(), timeout=5)
+        r = _req.get(_visitor_url(), headers=_firebase_headers(), timeout=5)
         return int(r.json() or 0) if r.status_code == 200 else None
     except Exception:
         return None
@@ -199,18 +222,26 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ── 中獎規則 ──────────────────────────────────────────────
-def check_prize(invoice_num: str, winning: dict) -> dict | None:
+# 比對優先順序：特別獎 → 特獎 → 頭獎（8碼）→ 二獎（7碼）→ … → 六獎（3碼）
+# special / super 先攔截，頭獎迴圈才不會重複命中
+def check_prize(invoice_num: str, winning: dict) -> Optional[dict]:
     inv = re.sub(r"[^0-9]", "", invoice_num)
     if len(inv) < 3:
         return None
+
+    # 特別獎：8 碼完全相同
     for w in winning.get("special", []):
         w8 = re.sub(r"[^0-9]", "", w)
         if len(w8) == 8 and inv[-8:] == w8:
             return {"name": "特別獎", "amount": "1,000萬元"}
+
+    # 特獎：8 碼完全相同
     for w in winning.get("super", []):
         w8 = re.sub(r"[^0-9]", "", w)
         if len(w8) == 8 and inv[-8:] == w8:
             return {"name": "特獎", "amount": "200萬元"}
+
+    # 頭獎～六獎：依末 N 碼由多到少比對，先命中即回傳
     for w in winning.get("first", []):
         w8 = re.sub(r"[^0-9]", "", w)
         if len(w8) != 8:
@@ -225,9 +256,14 @@ def check_prize(invoice_num: str, winning: dict) -> dict | None:
         ]:
             if len(inv) >= digits and inv[-digits:] == w8[-digits:]:
                 return {"name": name, "amount": amount}
+
     return None
 
-# ── OCR ───────────────────────────────────────────────────
+# ── OCR（快取 client 物件，減少重複建立開銷） ─────────────
+@st.cache_resource
+def _get_ocr_client(endpoint: str, api_key: str) -> _OpenAI:
+    return _OpenAI(base_url=endpoint, api_key=api_key)
+
 def call_ocr(image_bytes: bytes, api_key_override: str = "") -> str:
     key = api_key_override.strip() or OCR_API_KEY
     if not key:
@@ -235,9 +271,9 @@ def call_ocr(image_bytes: bytes, api_key_override: str = "") -> str:
     img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
     buf = io.BytesIO()
     img.save(buf, format="PNG")
-    b64 = base64.b64encode(buf.getvalue()).decode()
-    client = _OpenAI(base_url=OCR_ENDPOINT, api_key=key)
-    resp = client.chat.completions.create(
+    b64    = base64.b64encode(buf.getvalue()).decode()
+    client = _get_ocr_client(OCR_ENDPOINT, key)
+    resp   = client.chat.completions.create(
         model="chandra",
         messages=[{
             "role": "user",
@@ -252,8 +288,8 @@ def call_ocr(image_bytes: bytes, api_key_override: str = "") -> str:
     return resp.choices[0].message.content
 
 # ── 擷取發票號碼 ──────────────────────────────────────────
-def extract_invoice_numbers(text: str) -> list[str]:
-    found = re.findall(r"[A-Za-z]{2}[-\s]?\d{8}", text)
+def extract_invoice_numbers(text: str) -> List[str]:
+    found  = re.findall(r"[A-Za-z]{2}[-\s]?\d{8}", text)
     result, seen = [], set()
     for num in found:
         n = re.sub(r"[^A-Za-z0-9]", "", num).upper()
@@ -262,16 +298,31 @@ def extract_invoice_numbers(text: str) -> list[str]:
             result.append(n[:2] + "-" + n[2:])
     return result
 
-# ── 意見回饋 QR Code（主頁面用，掃描後顯示） ─────────────
-def show_feedback_qrcode():
-    """顯示意見表單的 QR Code 圖片與說明文字。"""
+# ── QR Code 顯示（統一函式，sidebar 與主頁面共用） ────────
+def _render_qr(width: Optional[int] = None, use_container: bool = False) -> None:
+    """
+    顯示意見表單 QR Code。
+    sidebar 使用 use_container=True；主頁面可指定 width。
+    圖片路徑統一由模組頂部 _QR_PATH 管理。
+    """
+    if _QR_PATH.exists():
+        if use_container:
+            st.image(str(_QR_PATH), caption="掃描 QR Code 填寫意見表單",
+                     use_container_width=True)
+        else:
+            st.image(str(_QR_PATH), width=width or 140)
+    else:
+        st.caption(
+            "請將 QR Code 圖片命名為「意見表單QRCode.png」放在與 app.py 同一資料夾。"
+        )
+
+def show_feedback_qrcode() -> None:
+    """掃描完成後顯示於主頁面底部。"""
     st.markdown("---")
     st.markdown("### 📣 歡迎填寫意見表單")
     col_qr, col_txt = st.columns([1, 2])
     with col_qr:
-        # 請將 QR Code 圖片命名為「意見表單QRCode.png」放在與 app.py 同一資料夾
-        if os.path.exists("意見表單QRCode.png"):
-            st.image("意見表單QRCode.png", width=140)
+        _render_qr(width=140)
     with col_txt:
         st.markdown(
             "<div style='color:rgba(255,255,255,0.6);font-size:0.9rem;padding-top:0.5rem'>"
@@ -304,14 +355,9 @@ with st.sidebar:
 | 六獎   | 末3碼與頭獎相同 | 200元 |
 """)
 
-    # ── 側邊欄意見回饋 QR Code ────────────────────────────
     st.markdown("---")
     st.markdown("### 💬 意見回饋")
-    if os.path.exists("意見表單QRCode.png"):
-        st.image("意見表單QRCode.png", caption="掃描 QR Code 填寫意見表單",
-                 use_container_width=True)
-    else:
-        st.caption("請將 QR Code 圖片命名為「意見表單QRCode.png」放在同一資料夾。")
+    _render_qr(use_container=True)   # ← 共用同一函式，不重複程式碼
 
 # ── 主介面 ────────────────────────────────────────────────
 col_l, col_r = st.columns([1, 1], gap="large")
@@ -326,6 +372,7 @@ with col_l:
     if uploaded_files:
         for f in uploaded_files:
             st.image(Image.open(f), caption=f.name, use_container_width=True)
+
     st.markdown("---")
     st.markdown("#### 🎯 填入本期中獎號碼")
     ca, cb = st.columns(2)
@@ -345,7 +392,7 @@ with col_l:
     if any_filled:
         st.markdown("**已填入：**")
         for k, nums in winning.items():
-            label = {"special":"特別獎","super":"特獎","first":"頭獎"}[k]
+            label = {"special": "特別獎", "super": "特獎", "first": "頭獎"}[k]
             for n in nums:
                 st.markdown(f'<span class="prize-badge">{label} {n}</span>',
                             unsafe_allow_html=True)
@@ -379,8 +426,10 @@ if scan:
         wins, loses, ocr_logs = [], [], []
         prog = st.progress(0, text="辨識中...")
         for idx, f in enumerate(uploaded_files):
-            prog.progress(idx / len(uploaded_files),
-                          text=f"辨識第 {idx+1}/{len(uploaded_files)} 張：{f.name}")
+            prog.progress(
+                idx / len(uploaded_files),
+                text=f"辨識第 {idx+1}/{len(uploaded_files)} 張：{f.name}",
+            )
             try:
                 raw  = call_ocr(f.getvalue(), manual_key)
                 invs = extract_invoice_numbers(raw)
@@ -393,8 +442,10 @@ if scan:
                     ocr_logs[-1]["note"] = "未偵測到發票號碼"
             except Exception as e:
                 st.error(f"❌ {f.name}：{e}")
+
         prog.progress(1.0, text="掃描完成！")
         total = len(wins) + len(loses)
+
         st.markdown("---")
         s1, s2, s3, s4 = st.columns(4)
         for col, num, lbl, color in [
@@ -403,8 +454,13 @@ if scan:
             (s3, len(wins),           "中獎張數",  "#00ff88"),
             (s4, len(loses),          "未中獎",    "rgba(255,255,255,0.35)"),
         ]:
-            col.markdown(f'<div class="stat-box"><div class="stat-num" style="color:{color}">{num}</div>'
-                         f'<div class="stat-lbl">{lbl}</div></div>', unsafe_allow_html=True)
+            col.markdown(
+                f'<div class="stat-box">'
+                f'<div class="stat-num" style="color:{color}">{num}</div>'
+                f'<div class="stat-lbl">{lbl}</div></div>',
+                unsafe_allow_html=True,
+            )
+
         st.markdown("<br>", unsafe_allow_html=True)
         with col_r:
             result_slot.empty()
@@ -426,20 +482,27 @@ if scan:
                     <div style="color:rgba(255,255,255,.4);font-size:1.05rem;margin-top:.5rem">很遺憾，本期未中獎</div>
                     <div style="color:rgba(255,255,255,.2);font-size:.8rem;margin-top:.3rem">繼續加油！下期再試！</div>
                 </div>""", unsafe_allow_html=True)
+
         if total > 0:
             st.markdown("#### 📋 發票號碼清單")
             for entry in wins + loses:
                 p   = entry["prize"]
                 won = p is not None
-                badge = (f'<span style="background:#0d2e0d;color:#00ff88;padding:2px 8px;border-radius:4px;font-size:.75rem">✓ {p["name"]} {p["amount"]}</span>'
-                         if won else
-                         '<span style="background:#1a1a2e;color:rgba(255,255,255,.3);padding:2px 8px;border-radius:4px;font-size:.75rem">未中獎</span>')
+                badge = (
+                    f'<span style="background:#0d2e0d;color:#00ff88;padding:2px 8px;'
+                    f'border-radius:4px;font-size:.75rem">✓ {p["name"]} {p["amount"]}</span>'
+                    if won else
+                    '<span style="background:#1a1a2e;color:rgba(255,255,255,.3);padding:2px 8px;'
+                    'border-radius:4px;font-size:.75rem">未中獎</span>'
+                )
                 border = "border-color:rgba(0,255,136,.4);" if won else ""
                 st.markdown(
                     f'<div class="invoice-card" style="{border}">'
                     f'<div class="invoice-num">{entry["invoice"]} {badge}</div>'
                     f'<div class="invoice-meta">{entry["file"]}</div></div>',
-                    unsafe_allow_html=True)
+                    unsafe_allow_html=True,
+                )
+
         with st.expander("🔍 查看 OCR 原始辨識結果"):
             for log in ocr_logs:
                 st.markdown(f"**{log['file']}**")
@@ -450,6 +513,7 @@ if scan:
                 else:
                     st.caption(log.get("note", "未偵測到發票號碼"))
                 st.markdown("---")
+
         st.markdown("""
 <div class="notice-bar" style="margin-top:1.5rem">
 ⚠️ <strong>再次提醒：</strong>以上辨識與對獎結果僅供初步參考，不保證 100% 準確。
